@@ -1,0 +1,32 @@
+{
+  "name": "@soundscript/webpack-loader",
+  "version": "0.1.12",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "peerDependencies": {
+    "@soundscript/soundscript": "^0.1.12",
+    "webpack": "^5.0.0"
+  },
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/soundscript-lang/adapters.git",
+    "directory": "packages/webpack-loader"
+  },
+  "bugs": {
+    "url": "https://github.com/soundscript-lang/adapters/issues"
+  },
+  "homepage": "https://github.com/soundscript-lang/adapters/tree/main/packages/webpack-loader",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ]
+}

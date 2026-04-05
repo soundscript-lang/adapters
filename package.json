@@ -1,0 +1,15 @@
+{
+  "name": "@soundscript/adapters-workspace",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test:versions && npm run test:manifests && npm run test:pack",
+    "test:versions": "node ./scripts/verify_release_versions.mjs",
+    "test:manifests": "node --test packages/*/package_manifest.test.js",
+    "test:pack": "node ./scripts/verify_package_packs.mjs",
+    "test:smoke": "node ./scripts/release_candidate_smoke.mjs",
+    "release:publish": "node ./scripts/publish_packages.mjs"
+  }
+}

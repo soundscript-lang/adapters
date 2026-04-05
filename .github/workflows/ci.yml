@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  manifest-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - run: npm pack --dry-run ./packages/register
+      - run: npm pack --dry-run ./packages/vite
+      - run: npm pack --dry-run ./packages/webpack-loader
+      - run: npm pack --dry-run ./packages/bun-plugin
+
+  release-candidate-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: jakemccloskey/soundscript
+          path: soundscript-core
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: oven-sh/setup-bun@v2
+      - id: prepare-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST_ROOT="$(mktemp -d)"
+          (
+            cd soundscript-core
+            SOUNDSCRIPT_RELEASE_DIST_ROOT="$DIST_ROOT" deno run -A scripts/release/prepare_npm.ts --stdlib-only >/dev/null
+          )
+          CANONICAL_TARBALL="$DIST_ROOT/soundscript-canonical/$(cd "$DIST_ROOT/soundscript-canonical" && npm pack --silent)"
+          ADAPTER_CORE_TARBALL="$DIST_ROOT/adapter-core/$(cd "$DIST_ROOT/adapter-core" && npm pack --silent)"
+          echo "canonical_tarball=$CANONICAL_TARBALL" >> "$GITHUB_OUTPUT"
+          echo "adapter_core_tarball=$ADAPTER_CORE_TARBALL" >> "$GITHUB_OUTPUT"
+      - run: npm run test:smoke
+        env:
+          SOUNDSCRIPT_CANONICAL_TARBALL: ${{ steps.prepare-core.outputs.canonical_tarball }}
+          SOUNDSCRIPT_ADAPTER_CORE_TARBALL: ${{ steps.prepare-core.outputs.adapter_core_tarball }}
+          SOUNDSCRIPT_SMOKE_REQUIRE_BUN: "1"
