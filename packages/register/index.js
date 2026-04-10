@@ -1,4 +1,6 @@
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolve as resolvePath } from 'node:path';
+import process from 'node:process';
 
 import {
   createOnDemandTransformer,
@@ -15,6 +17,46 @@ function filePathFromUrl(url) {
 
 function fileUrlFromPath(path) {
   return pathToFileURL(path).href;
+}
+
+function preloadSpecifierMatchesCurrentModule(specifier) {
+  if (specifier === '@soundscript/register') {
+    return true;
+  }
+
+  if (specifier.startsWith('file:')) {
+    return specifier === import.meta.url;
+  }
+
+  if (
+    !specifier.startsWith('/') && !specifier.startsWith('./') &&
+    !specifier.startsWith('../')
+  ) {
+    return false;
+  }
+
+  return fileUrlFromPath(resolvePath(process.cwd(), specifier)) === import.meta.url;
+}
+
+function shouldAutoRegisterFromExecArgv(execArgv = process.execArgv) {
+  for (let index = 0; index < execArgv.length; index += 1) {
+    const argument = execArgv[index];
+    let specifier;
+    if (argument === '--import') {
+      specifier = execArgv[index + 1];
+      index += 1;
+    } else if (argument?.startsWith('--import=')) {
+      specifier = argument.slice('--import='.length);
+    } else {
+      continue;
+    }
+
+    if (specifier && preloadSpecifierMatchesCurrentModule(specifier)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function syncTransformerFromOptions(options) {
@@ -40,6 +82,30 @@ function loadResultFromTransform(transformed) {
     shortCircuit: true,
     source: `${transformed.code}\n${inlineSourceMapComment(transformed.mapText)}\n`,
   };
+}
+
+const registeredTransformerHooks = new WeakSet();
+const registeredDefaultHookKeys = new Set();
+
+function getDefaultHookKey(options) {
+  return `${options.projectPath ?? ''}\u0000${options.workingDirectory ?? ''}`;
+}
+
+function registerNodeHooks(registerHooks, options = {}) {
+  if (options.transformer) {
+    if (registeredTransformerHooks.has(options.transformer)) {
+      return;
+    }
+    registeredTransformerHooks.add(options.transformer);
+  } else {
+    const key = getDefaultHookKey(options);
+    if (registeredDefaultHookKeys.has(key)) {
+      return;
+    }
+    registeredDefaultHookKeys.add(key);
+  }
+
+  registerHooks(createNodeRegisterHooks(options));
 }
 
 export function createNodeLoaderHooks(options = {}) {
@@ -133,5 +199,9 @@ function createNodeRegisterHooks(options = {}) {
 
 export async function registerSoundscriptHooks(options = {}) {
   const { registerHooks } = await import('node:module');
-  registerHooks(createNodeRegisterHooks(options));
+  registerNodeHooks(registerHooks, options);
+}
+
+if (shouldAutoRegisterFromExecArgv()) {
+  await registerSoundscriptHooks({ workingDirectory: process.cwd() });
 }

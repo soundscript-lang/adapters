@@ -1,6 +1,6 @@
 {
   "name": "@soundscript/register",
-  "version": "0.1.12",
+  "version": "0.1.21",
   "type": "module",
   "exports": {
     ".": {
@@ -10,7 +10,7 @@
     }
   },
   "peerDependencies": {
-    "@soundscript/soundscript": "^0.1.12"
+    "@soundscript/soundscript": "^0.1.21"
   },
   "license": "ISC",
   "repository": {

@@ -196,6 +196,12 @@ async function main() {
     );
     assert(registerPayload.doubled === 42, '@soundscript/register did not load the macro fixture.');
 
+    run(
+      'node',
+      ['--import', '@soundscript/register', './src/main.sts'],
+      { cwd: projectRoot },
+    );
+
     const vitePayload = runJsonNodeEval(
       projectRoot,
       [
