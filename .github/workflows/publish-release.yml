@@ -1,0 +1,209 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Optional version expected from packages/register/package.json
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: adapters-publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: soundscript-lang/soundscript
+          path: soundscript-core
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Use supported npm for trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          SYSTEM_NPX="$(command -v npx)"
+          mkdir -p "$RUNNER_TEMP/npm-bin"
+          cat > "$RUNNER_TEMP/npm-bin/npm" <<EOF
+          #!/usr/bin/env bash
+          exec "$SYSTEM_NPX" --yes npm@^11.5.1 "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/npm-bin/npm"
+          export PATH="$RUNNER_TEMP/npm-bin:$PATH"
+          echo "$RUNNER_TEMP/npm-bin" >> "$GITHUB_PATH"
+          node --version
+          npm --version
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node --input-type=module --eval 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/register/package.json", "utf8")); console.log(pkg.version);')"
+          if [[ -n "${{ inputs.expected_version }}" && "${{ inputs.expected_version }}" != "$VERSION" ]]; then
+            echo "Expected version ${{ inputs.expected_version }}, found $VERSION." >&2
+            exit 1
+          fi
+          TAG="v$VERSION"
+          PACKAGES_JSON="$(node --input-type=module --eval 'import { readFileSync } from "node:fs"; const directories = ["register", "vite", "webpack-loader", "bun-plugin"]; const names = directories.map((directory) => JSON.parse(readFileSync(`packages/${directory}/package.json`, "utf8")).name); console.log(JSON.stringify(names));')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "packages_json=$PACKAGES_JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag and release state
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          git fetch --force --tags origin
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            TAG_EXISTS=true
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            HEAD_COMMIT="$(git rev-parse HEAD)"
+            if [[ "$TAG_COMMIT" != "$HEAD_COMMIT" ]]; then
+              echo "Tag $TAG already exists on $TAG_COMMIT, not HEAD $HEAD_COMMIT." >&2
+              exit 1
+            fi
+          else
+            TAG_EXISTS=false
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          else
+            RELEASE_EXISTS=false
+          fi
+
+          echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
+          echo "release_exists=$RELEASE_EXISTS" >> "$GITHUB_OUTPUT"
+
+      - name: Check npm publish state
+        id: npm_state
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          PACKAGES_JSON='${{ steps.meta.outputs.packages_json }}'
+          PUBLISHED_COUNT=0
+          MISSING_COUNT=0
+
+          while IFS= read -r PACKAGE_NAME; do
+            [[ -z "$PACKAGE_NAME" ]] && continue
+            if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+              echo "already published: ${PACKAGE_NAME}@${VERSION}"
+              PUBLISHED_COUNT=$((PUBLISHED_COUNT + 1))
+            else
+              echo "not yet published: ${PACKAGE_NAME}@${VERSION}"
+              MISSING_COUNT=$((MISSING_COUNT + 1))
+            fi
+          done < <(jq -r '.[]' <<< "$PACKAGES_JSON")
+
+          if [[ "$PUBLISHED_COUNT" -gt 0 && "$MISSING_COUNT" -gt 0 ]]; then
+            echo "Mixed npm publish state detected for version $VERSION. Refusing to continue." >&2
+            exit 1
+          fi
+
+          if [[ "$MISSING_COUNT" -eq 0 ]]; then
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out matching soundscript tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          git -C soundscript-core fetch --force --tags origin
+          git -C soundscript-core checkout "$TAG"
+
+      - name: Prepare soundscript canonical tarball for smoke tests
+        id: prepare_core
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST_ROOT="$(mktemp -d)"
+          (
+            cd soundscript-core
+            SOUNDSCRIPT_RELEASE_DIST_ROOT="$DIST_ROOT" deno run -A scripts/release/prepare_npm.ts --stdlib-only >/dev/null
+          )
+          CANONICAL_DIRECTORY="$DIST_ROOT/soundscript-canonical"
+          CANONICAL_TARBALL="$CANONICAL_DIRECTORY/$(cd "$CANONICAL_DIRECTORY" && npm pack --silent)"
+          echo "canonical_tarball=$CANONICAL_TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Run release checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          npm run test:smoke
+        env:
+          SOUNDSCRIPT_CANONICAL_TARBALL: ${{ steps.prepare_core.outputs.canonical_tarball }}
+          SOUNDSCRIPT_SMOKE_REQUIRE_BUN: "1"
+
+      - name: Publish npm packages
+        if: ${{ steps.npm_state.outputs.needs_publish == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run release:publish
+
+      - name: Create and push git tag
+        if: ${{ steps.state.outputs.tag_exists != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "adapters v${VERSION}"
+          git push origin "$TAG"
+
+      - name: Create or update GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          PACKAGES_JSON='${{ steps.meta.outputs.packages_json }}'
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          {
+            echo "soundscript adapters v${VERSION}"
+            echo
+            echo "Published packages:"
+            jq -r '.[]' <<< "$PACKAGES_JSON" | sed 's/^/- `/; s/$/`/'
+          } > "$NOTES_FILE"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "adapters v${VERSION}" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" --title "adapters v${VERSION}" --notes-file "$NOTES_FILE"
+          fi
