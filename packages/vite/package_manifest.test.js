@@ -7,9 +7,9 @@ const pkg = JSON.parse(readFileSync(join(import.meta.dirname, 'package.json'), '
 
 test('vite package manifest exposes the expected dependency contract', () => {
   assert.equal(pkg.name, '@soundscript/vite');
-  assert.equal(pkg.version, '0.1.22');
+  assert.equal(pkg.version, '0.1.23');
   assert.equal(pkg.dependencies?.['@soundscript/adapter-core'], undefined);
-  assert.equal(pkg.peerDependencies['@soundscript/soundscript'], '^0.1.22');
+  assert.equal(pkg.peerDependencies['@soundscript/soundscript'], '^0.1.23');
   assert.equal(pkg.peerDependencies.vite, '^5.0.0 || ^6.0.0');
   assert.equal(pkg.exports['.'].default, './index.js');
   assert.deepEqual(pkg.files, ['index.js', 'index.d.ts', 'README.md', 'LICENSE']);

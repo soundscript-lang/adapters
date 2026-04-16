@@ -76,9 +76,60 @@ function syncTransformerFromOptions(options) {
   );
 }
 
-function loadResultFromTransform(transformed) {
+function parseNodeVersion(nodeVersion) {
+  const match = /^v?(\d+)\.(\d+)/u.exec(nodeVersion ?? '');
+  return match ? { major: Number(match[1]), minor: Number(match[2]) } : undefined;
+}
+
+function nodeSupportsTypeScriptLoader() {
+  const featureSupport = process.features?.typescript;
+  if (featureSupport === 'strip' || featureSupport === 'transform') {
+    return true;
+  }
+  if (featureSupport === false) {
+    return false;
+  }
+  if (
+    process.execArgv.includes('--no-strip-types') ||
+    process.execArgv.includes('--no-experimental-strip-types')
+  ) {
+    return false;
+  }
+  if (
+    process.execArgv.includes('--experimental-strip-types') ||
+    process.execArgv.includes('--experimental-transform-types')
+  ) {
+    return true;
+  }
+
+  const parsed = parseNodeVersion(process.versions.node);
+  if (!parsed) {
+    return false;
+  }
+  return parsed.major >= 24 ||
+    (parsed.major === 23 && parsed.minor >= 6) ||
+    (parsed.major === 22 && parsed.minor >= 18);
+}
+
+function filePathSupportsTypeScriptLoaderFormat(filePath) {
+  return /\.(?:[cm]?tsx?)$/iu.test(filePath) && !/\.d\.[cm]?ts$/iu.test(filePath);
+}
+
+function loaderFormatForTransform(filePath, transformed) {
+  if (transformed.loaderFormat === 'module-typescript') {
+    return 'module-typescript';
+  }
+  if (transformed.loaderFormat === 'module') {
+    return 'module';
+  }
+  return nodeSupportsTypeScriptLoader() && filePathSupportsTypeScriptLoaderFormat(filePath)
+    ? 'module-typescript'
+    : 'module';
+}
+
+function loadResultFromTransform(filePath, transformed) {
   return {
-    format: 'module',
+    format: loaderFormatForTransform(filePath, transformed),
     shortCircuit: true,
     source: `${transformed.code}\n${inlineSourceMapComment(transformed.mapText)}\n`,
   };
@@ -150,7 +201,7 @@ export function createNodeLoaderHooks(options = {}) {
       }
 
       const transformed = await transformer.transformModule(filePath);
-      return loadResultFromTransform(transformed);
+      return loadResultFromTransform(filePath, transformed);
     },
   };
 }
@@ -192,7 +243,7 @@ function createNodeRegisterHooks(options = {}) {
           : loaded;
       }
 
-      return loadResultFromTransform(transformer.transformModuleSync(filePath));
+      return loadResultFromTransform(filePath, transformer.transformModuleSync(filePath));
     },
   };
 }

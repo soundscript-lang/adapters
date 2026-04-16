@@ -1,6 +1,6 @@
 {
   "name": "@soundscript/webpack-loader",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "type": "module",
   "exports": {
     ".": {
@@ -10,7 +10,7 @@
     }
   },
   "peerDependencies": {
-    "@soundscript/soundscript": "^0.1.22",
+    "@soundscript/soundscript": "^0.1.23",
     "webpack": "^5.0.0"
   },
   "license": "ISC",

@@ -14,7 +14,7 @@ interface NodeResolveResult {
 type NodeLoadContext = Record<string, never>;
 
 interface NodeLoadResult {
-  format: 'module';
+  format: 'module' | 'module-typescript';
   shortCircuit?: boolean;
   source: string;
 }
